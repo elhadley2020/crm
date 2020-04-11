@@ -1,75 +1,69 @@
-from flask import Flask 
-from flask_restful import reqparse, abort, Resource, Api
+from flask import Flask, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_restful import Api, Resource # new
 
 app = Flask(__name__)
-api = Api(app)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+db = SQLAlchemy(app)
+api = Api(app) # new
 
-CONTACTS = {
-    'contact1':{'first':'eric','last':'hadley','email':'eric@domain.com','phone':'7038751234'},
-    'contact2':{'first':'zach','last':'bower','email':'zach@domain.com','phone':'5715674567'},
-    'contact3':{'first':'kelly','last':'johnson','email':'kelly@domain.com','phone':'9873643456'}
-}
-
-def abort_if_contact_doesnt_exist(contact_id):
-    if contact_id not in CONTACTS:
-        abort(404, message="Contact {} doesn't exist".format(contact_id))
-
-parser = reqparse.RequestParser()
-
-# declare parsers keys from payload
-parser.add_argument('first')
-parser.add_argument('last')
-parser.add_argument('phone')
-parser.add_argument('email')
-
-
-# Contact
-# shows a single contact item and lets you delete a contact item
-class Contact(Resource):
-    def get(self, contact_id):
-        abort_if_contact_doesnt_exist(contact_id)
-        return CONTACTS[contact_id]
-    
-    def delete(self, contact_id):
-        abort_if_contact_doesnt_exist(contact_id)
-        del CONTACTS[contact_id]
-        return '', 204
-    
-    def put(self, contact_id):
-        args = parser.parse_args()
-        contact = {
-            'first': args['first'],
-            'last':args['last'],
-            'email':args['email'],
-            'phone':args['phone']
-            }
-        CONTACTS[contact_id]= contact
-        return contact, 201
-
-# ContactList
-# shows a list of all contact, and lets you POST to new contacts
-class ContactList(Resource):
-    def get(self):
-        return CONTACTS
-
-    def post(self):
-        args = parser.parse_args()
-        contact_id = int(max(CONTACTS.keys()).lstrip('contact')) + 1
-        contact_id = 'contact%i' % contact_id
-        contact = {
-            'first': args['first'],
-            'last': args['last'],
-            'email': args['email'],
-            'phone': args['phone'],
-            }
-        CONTACTS[contact_id] = contact
-        return CONTACTS[contact_id], 201
-
-##
-## Actually setup the Api resource routing here
-##
-api.add_resource(ContactList, '/contacts')
-api.add_resource(Contact, '/contact/<contact_id>')
+# ...
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(50))
+    content = db.Column(db.String(255))
+
+    def __repr__(self):
+        return '<Post %s>' % self.title
+
+class PostSchema(ma.Schema):
+    class Meta:
+        fields = ("id", "title", "content")
+
+post_schema = PostSchema()
+posts_schema = PostSchema(many=True)
+
+class PostListResource(Resource):
+    def get(self):
+        posts = Post.query.all()
+        return posts_schema.dump(posts)
+
+    # new
+    def post(self):
+        new_post = Post(
+            title=request.json['title'],
+            content=request.json['content']
+        )
+        db.session.add(new_post)
+        db.session.commit()
+        return post_schema.dump(new_post)
+
+api.add_resource(PostListResource, '/posts')
+
+class PostResource(Resource):
+    def get(self, post_id):
+        post = Post.query.get_or_404(post_id)
+        return post_schema.dump(post)
+    
+    def patch(self, post_id):
+        post = Post.query.get_or_404(post_id)
+
+        if 'title' in request.json:
+            post.title = request.json['title']
+        if 'content' in request.json:
+            post.content = request.json['content']
+
+        db.session.commit()
+        return post_schema.dump(post)
+
+    def delete(self, post_id):
+        post = Post.query.get_or_404(post_id)
+        db.session.delete(post)
+        db.session.commit()
+        return '', 204
+
+api.add_resource(PostResource, '/posts/<int:post_id>')
